@@ -1,0 +1,11 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql
+spec:
+  type: ExternalName
+  externalName: testind.mysql.database.azure.com
+
+# kubectl run -it --rm --image=mysql:8.0 --restart=Never mysql-client -- mysql -h testind.mysql.database.azure.com -u testind -p india123$
+# db testind password: india123$
+---

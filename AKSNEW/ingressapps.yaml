@@ -1,0 +1,233 @@
+# app1
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app1-nginx-deployment
+  labels:
+    app: app1-nginx
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: app1-nginx
+  template:
+    metadata:
+      labels:
+        app: app1-nginx
+    spec:
+      containers:
+      - name: app1-nginx
+        image: stacksimplify/kube-nginxapp1:1.0.0
+        ports:
+        - containerPort: 80
+
+
+# app1 svc
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: app1-nginx-clusterip-service
+  labels:
+    app: app1-nginx
+spec:
+  type: ClusterIP
+  selector:
+    app: app1-nginx
+  ports:
+  - port: 80
+    targetPort: 80
+
+
+---
+# APP2
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: app2-nginx-deployment
+  labels:
+    app: app2-nginx
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: app2-nginx
+  template:
+    metadata:
+      labels:
+        app: app2-nginx
+    spec:
+      containers:
+      - name: app2-nginx
+        image: stacksimplify/kube-nginxapp2:1.0.0
+        ports:
+        - containerPort: 80
+
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: app2-nginx-clusterip-service
+  labels:
+    app: app2-nginx
+  annotations:
+spec:
+  type: ClusterIP
+  selector:
+    app: app2-nginx
+  ports:
+  - port: 80
+    targetPort: 80
+
+
+
+---
+#app3
+# sql db with web app
+
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: azure-managed-disk-pvc
+spec:
+  accessModes:
+  - ReadWriteOnce
+  storageClassName: managed-premium
+  resources:
+    requests:
+      storage: 5Gi
+
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: usermanagement-dbcreation-script
+data:
+  mysql_usermgmt.sql: "DROP DATABASE IF EXISTS webappdb;\nCREATE DATABASE webappdb; \n        #magic___^_^___line"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mysql
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mysql
+  strategy:
+    type: Recreate
+  template:
+    metadata:
+      labels:
+        app: mysql
+    spec:
+      containers:
+      - name: mysql
+        image: mysql:5.6
+        env:
+        - name: MYSQL_ROOT_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mysql-db-password
+              key: db-password
+        ports:
+        - containerPort: 3306
+          name: mysql
+        volumeMounts:
+        - name: mysql-persistent-storage
+          mountPath: /var/lib/mysql
+        - name: usermanagement-dbcreation-script
+          mountPath: /docker-entrypoint-initdb.d #https://hub.docker.com/_/mysql Refer Initializing a fresh instance                                            
+      volumes:
+      - name: mysql-persistent-storage
+        persistentVolumeClaim:
+          claimName: azure-managed-disk-pvc
+      - name: usermanagement-dbcreation-script
+        configMap:
+          name: usermanagement-dbcreation-script
+
+
+---
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql
+spec:
+  selector:
+    app: mysql
+  ports:
+  - port: 3306
+  clusterIP: None # This means we are going to use Pod IP    
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: usermgmt-webapp
+  labels:
+    app: usermgmt-webapp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: usermgmt-webapp
+  template:
+    metadata:
+      labels:
+        app: usermgmt-webapp
+    spec:
+      initContainers:
+      - name: init-db
+        image: busybox:1.31
+        command: ['sh', '-c', 'echo -e "Checking for the availability of MySQL Server deployment"; while ! nc -z mysql 3306; do sleep 1; printf "-"; done; echo -e "  >> MySQL DB Server has started";']
+      containers:
+      - name: usermgmt-webapp
+        image: stacksimplify/kube-usermgmt-webapp:1.0.0-MySQLDB
+        imagePullPolicy: Always
+        ports:
+        - containerPort: 8080
+        env:
+        - name: DB_HOSTNAME
+          value: "mysql"
+        - name: DB_PORT
+          value: "3306"
+        - name: DB_NAME
+          value: "webappdb"
+        - name: DB_USERNAME
+          value: "root"
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: mysql-db-password
+              key: db-password
+
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: usermgmt-webapp-clusterip-service
+  labels:
+    app: usermgmt-webapp
+spec:
+  type: ClusterIP
+  selector:
+    app: usermgmt-webapp
+  ports:
+  - port: 80
+    targetPort: 8080
+
+
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: mysql-db-password
+type: Opaque
+data:
+  db-password: ZGJwYXNzd29yZDEx
